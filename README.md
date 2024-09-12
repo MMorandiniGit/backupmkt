@@ -55,7 +55,7 @@ pip install paramiko
 ### 1. Clona este repositorio
 
 ```bash
-git clone https://github.com/MMorandiniGit/backupmkt
+git clone https://github.com/MMorandiniGit/backupmkt.git
 cd backupmkt
 ```
 
