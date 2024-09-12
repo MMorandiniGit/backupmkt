@@ -39,9 +39,6 @@ El código se organiza en varias funciones que realizan las tareas de conexión,
 5. **`respaldar_router(ip_address, router_name, backup_path)`**:
    - Función que combina la conexión SSH y la descarga de archivos para un router específico. Se ejecuta en un hilo separado para permitir respaldos concurrentes.
 
-6. **`main()`**:
-   - Lee un archivo `csv` que contiene la lista de routers y utiliza la biblioteca **ThreadPoolExecutor** para realizar el respaldo en paralelo.
-
 ## Requisitos del Sistema ⚙️
 
 - **Python 3.7+**
