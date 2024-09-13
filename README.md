@@ -1,5 +1,5 @@
 
-# Backup Router Script 🖥️📂
+# Backup Router Mikrotik Script 🖥️📂
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.7%2B-blue.svg)](https://www.python.org/)
@@ -7,7 +7,7 @@
 
 ## Descripción del Proyecto 🚀
 
-Este proyecto es un script en Python que automatiza la **copia de seguridad** de archivos de configuración de routers mediante **conexiones SSH**. El script se conecta a una lista de routers, descarga archivos específicos, y renombra los respaldos antiguos. Se ejecuta utilizando múltiples hilos para optimizar el tiempo de ejecución y gestiona conexiones SSH de manera segura.
+Este proyecto es un script en Python que automatiza la **copia de seguridad** de archivos de configuración de routers Mikrotik mediante **conexiones SSH**. El script se conecta a una lista de routers, descarga archivos específicos, y renombra los respaldos antiguos. Se ejecuta utilizando múltiples hilos para optimizar el tiempo de ejecución y gestiona conexiones SSH de manera segura.
 
 ## Características 🛠️
 
@@ -78,6 +78,19 @@ El archivo `rt.csv` debe contener la lista de routers a los cuales deseas conect
 ```
 
 ### 4. Ejecuta el Script
+
+Crear en el Mikrotik el grupo y usuario correspondiente con permisos de read, ssh, ftp y sensitive:
+
+```bash
+/user group
+add name=NombreDeGrupo policy=ssh,ftp,read,sensitive,!local,!telnet,!reboot,!write,!policy,!test,!winbox,!password,!web,!sniff,!api,!romon,!rest-api
+```
+
+```bash
+/user add name=ColocaElNombreDeUsuario group=backup password=ColocaLaClaveParaTuUsuario
+```
+
+### 5. Ejecuta el Script
 
 Para ejecutar el script y realizar los respaldos, utiliza:
 
