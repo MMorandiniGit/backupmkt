@@ -9,6 +9,13 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - dependencia opcional
+    load_dotenv = lambda: None
+
 import paramiko
 
 # Configuración del logging
@@ -18,13 +25,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+load_dotenv()
+
 # Define las variables globales para usuario y contraseña
-USERNAME = os.getenv(
-    "SSH_USERNAME", ""
-)  # Reemplaza con la variable de entorno adecuada
-PASSWORD = os.getenv(
-    "SSH_PASSWORD", ""
-)  # Reemplaza con la variable de entorno adecuada
+USERNAME = os.getenv("SSH_USERNAME", "")
+PASSWORD = os.getenv("SSH_PASSWORD", "")
 DIAS_MAXIMOS = 6  # Número de días tras los cuales un respaldo se considera antiguo
 
 
@@ -41,7 +46,13 @@ def conectar_ssh(ip_address):
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(ip_address, port=22, username=USERNAME, password=PASSWORD)
+        ssh.connect(
+            ip_address,
+            port=22,
+            username=USERNAME,
+            password=PASSWORD,
+            timeout=10,
+        )
         return ssh
     except paramiko.AuthenticationException:
         logging.error("Error de autenticación al conectar al router %s", ip_address)
@@ -56,14 +67,14 @@ def conectar_ssh(ip_address):
     return None
 
 
-def descargar_archivo(sftp_client, archivo, backup_path, router_name, current_time):
+def descargar_archivo(sftp_client, archivo, backup_path: Path, router_name, current_time):
     """
     Descarga un archivo específico del router y lo guarda en el directorio de respaldo.
 
     Args:
         sftp_client: Cliente SFTP para la transferencia de archivos.
         archivo (str): Nombre del archivo que se desea descargar.
-        backup_path (str): Ruta local donde se guardará el archivo.
+        backup_path (Path): Ruta local donde se guardará el archivo.
         router_name (str): Nombre del router desde el cual se descarga el archivo.
         current_time (str): Cadena de tiempo actual utilizada para nombrar el archivo descargado.
 
@@ -75,49 +86,41 @@ def descargar_archivo(sftp_client, archivo, backup_path, router_name, current_ti
     """
     try:
         nuevo_nombre_archivo = f"{router_name}_{current_time}_{archivo}"
-        sftp_client.get(f"/{archivo}", os.path.join(backup_path, nuevo_nombre_archivo))
+        destino = backup_path / nuevo_nombre_archivo
+        sftp_client.get(archivo, str(destino))
         logging.info(
             "Archivo %s descargado correctamente para el router %s.",
             archivo,
             router_name,
         )
-    except FileNotFoundError as fnf_error:
-        logging.error("Archivo no encontrado: %s", fnf_error)
+    except FileNotFoundError:
+        logging.warning("Archivo %s no encontrado en el servidor", archivo)
     except PermissionError as perm_error:
         logging.error("Permiso denegado al descargar archivo: %s", perm_error)
-    except paramiko.SSHException as ssh_error:
-        logging.error("Error SSH al descargar el archivo %s: %s", archivo, ssh_error)
-    except OSError as os_error:
-        logging.error("Error de sistema al descargar archivo %s: %s", archivo, os_error)
+    except paramiko.SSHException:
+        logging.exception("Error SSH al descargar el archivo %s", archivo)
+    except OSError:
+        logging.exception("Error de sistema al descargar archivo %s", archivo)
 
 
-def descargar_archivos(ssh_client, router_name, backup_path):
+def descargar_archivos(ssh_client, router_name, backup_path: Path):
     """
     Descarga los archivos 'latest.rsc' y 'latest.backup' del router.
 
     Args:
         ssh_client: Conexión SSH al router.
         router_name (str): Nombre del router desde el cual se descargan los archivos.
-        backup_path (str): Ruta local donde se guardarán los archivos descargados.
+        backup_path (Path): Ruta local donde se guardarán los archivos descargados.
     """
     try:
         current_time = time.strftime("%Y%m%d")
         archivos_deseados = ["latest.rsc", "latest.backup"]
 
-        # Obtener la lista de archivos en el directorio remoto
         with ssh_client.open_sftp() as sftp_client:
-            archivos_remotos = sftp_client.listdir(".")
             for archivo in archivos_deseados:
-                if archivo in archivos_remotos:
-                    descargar_archivo(
-                        sftp_client, archivo, backup_path, router_name, current_time
-                    )
-                else:
-                    logging.warning(
-                        "Archivo %s no encontrado en el router %s.",
-                        archivo,
-                        router_name,
-                    )
+                descargar_archivo(
+                    sftp_client, archivo, backup_path, router_name, current_time
+                )
 
     except paramiko.SSHException as e:
         logging.error(
@@ -136,35 +139,37 @@ def descargar_archivos(ssh_client, router_name, backup_path):
             ssh_client.close()
 
 
-def renombrar_backups_antiguos(backup_path):
+def renombrar_backups_antiguos(backup_path: Path):
     """
     Renombra los archivos de respaldo antiguos agregando el sufijo '-old'.
 
     Args:
-        backup_path (str): Ruta local donde se encuentran los archivos de respaldo.
+        backup_path (Path): Ruta local donde se encuentran los archivos de respaldo.
     """
     ahora = time.time()
-    for archivo in os.listdir(backup_path):
-        ruta_archivo = os.path.join(backup_path, archivo)
+    for ruta_archivo in backup_path.iterdir():
+        archivo = ruta_archivo.name
         try:
-            if archivo.endswith((".rsc", ".backup")) and not archivo.endswith(
-                ("-old.rsc", "-old.backup")
+            if ruta_archivo.suffix in {".rsc", ".backup"} and not archivo.endswith(
+                "-old" + ruta_archivo.suffix
             ):
-                fecha_creacion = os.path.getctime(ruta_archivo)
+                fecha_creacion = ruta_archivo.stat().st_mtime
                 antiguedad_dias = (ahora - fecha_creacion) / (24 * 3600)
                 if antiguedad_dias > DIAS_MAXIMOS:
-                    nuevo_nombre = archivo.replace(".rsc", "-old.rsc").replace(
-                        ".backup", "-old.backup"
+                    nuevo_nombre = ruta_archivo.with_name(
+                        f"{ruta_archivo.stem}-old{ruta_archivo.suffix}"
                     )
-                    os.rename(ruta_archivo, os.path.join(backup_path, nuevo_nombre))
-                    logging.info("Archivo %s renombrado a %s.", archivo, nuevo_nombre)
+                    ruta_archivo.rename(nuevo_nombre)
+                    logging.info(
+                        "Archivo %s renombrado a %s.", archivo, nuevo_nombre.name
+                    )
         except FileNotFoundError as fnf_error:
             logging.error("Archivo no encontrado: %s", fnf_error)
         except PermissionError as perm_error:
             logging.error("Permiso denegado al renombrar archivo: %s", perm_error)
-        except OSError as os_error:
-            logging.error(
-                "Error de sistema al renombrar archivo %s: %s", archivo, os_error
+        except OSError:
+            logging.exception(
+                "Error de sistema al renombrar archivo %s", archivo
             )
 
 
@@ -175,30 +180,34 @@ def respaldar_router(ip_address, router_name, backup_path):
     Args:
         ip_address (str): Dirección IP del router.
         router_name (str): Nombre del router.
-        backup_path (str): Ruta local donde se guardarán los archivos descargados.
+        backup_path (Path): Ruta local donde se guardarán los archivos descargados.
     """
     ssh_client = conectar_ssh(ip_address)
     if ssh_client:
         descargar_archivos(ssh_client, router_name, backup_path)
+    else:
+        logging.error("No se pudo establecer conexión con el router %s", router_name)
 
 
 if __name__ == "__main__":
-    directorio_actual = os.getcwd()
-    ruta_respaldo_principal = directorio_actual
+    ruta_respaldo_principal = Path.cwd()
+    max_workers = int(os.getenv("MAX_WORKERS", "4"))
 
-    # Lee la lista de routers a respaldar en el archivo rt.csv
-    with open("rt.csv", "r", encoding="utf-8") as f:
-        lector_csv = csv.reader(f)
-        # Ejecutar hilos de forma controlada con un máximo de 4 hilos simultáneos
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            for fila in lector_csv:
-                ip_router, nombre_router_interno = fila[0], fila[1]
-                executor.submit(
-                    respaldar_router,
-                    ip_router,
-                    nombre_router_interno,
-                    ruta_respaldo_principal,
-                )
+    try:
+        with open("rt.csv", "r", encoding="utf-8") as f:
+            lector_csv = csv.reader(f)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for fila in lector_csv:
+                    if not fila:
+                        continue
+                    ip_router, nombre_router_interno = fila[0], fila[1]
+                    executor.submit(
+                        respaldar_router,
+                        ip_router,
+                        nombre_router_interno,
+                        ruta_respaldo_principal,
+                    )
+    except FileNotFoundError:
+        logging.error("Archivo rt.csv no encontrado.")
 
-    # Renombrar backups con más de 7 días de antigüedad.
     renombrar_backups_antiguos(ruta_respaldo_principal)
